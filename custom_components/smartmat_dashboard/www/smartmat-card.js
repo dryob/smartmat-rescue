@@ -11,7 +11,7 @@
  *                         #   integration's device page instead.
  */
 
-const VERSION = "0.2.3";
+const VERSION = "0.2.4";
 
 const REL = (() => {
   try {
@@ -55,6 +55,13 @@ function getStateNum(hass, eid, fallback) {
 }
 
 class SmartMatCard extends HTMLElement {
+  constructor() {
+    super();
+    this._config = null;
+    this._hass = null;
+    this._built = false;
+  }
+
   setConfig(config) {
     if (!config || !config.entity) {
       throw new Error(
@@ -335,6 +342,12 @@ const EDITOR_LABELS = {
 };
 
 class SmartMatCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    this._config = {}; // Always defined, even if hass setter fires before setConfig
+    this._hass = null;
+  }
+
   setConfig(config) {
     this._config = config || {};
     this._update();
@@ -349,34 +362,49 @@ class SmartMatCardEditor extends HTMLElement {
 
   _update() {
     if (!this._hass) return;
+    const cfg = this._config || {};
 
-    if (!this._form) {
-      this._form = document.createElement("ha-form");
-      this._form.computeLabel = (s) => EDITOR_LABELS[s.name] || s.name;
-      this._form.addEventListener("value-changed", (ev) => this._onChange(ev));
+    try {
+      if (!this._form) {
+        this._form = document.createElement("ha-form");
+        this._form.computeLabel = (s) => EDITOR_LABELS[s.name] || s.name;
+        this._form.addEventListener("value-changed", (ev) => this._onChange(ev));
 
-      const hint = document.createElement("div");
-      hint.style.cssText =
-        "font-size:12px; color:var(--secondary-text-color); line-height:1.4; padding:8px 0 4px;";
-      hint.innerHTML =
-        "Leave <b>Show inline controls</b> off for a compact card. Edit tare / full / product name inside " +
-        "<b>Settings → Devices &amp; services → SmartMat Dashboard</b> (click the mat device).";
+        const hint = document.createElement("div");
+        hint.style.cssText =
+          "font-size:12px; color:var(--secondary-text-color); line-height:1.4; padding:8px 0 4px;";
+        hint.innerHTML =
+          "Leave <b>Show inline controls</b> off for a compact card. " +
+          "Edit tare / full / product name inside " +
+          "<b>Settings → Devices &amp; services → SmartMat Dashboard</b> " +
+          "(click the mat device).";
 
-      this.appendChild(this._form);
-      this.appendChild(hint);
+        this.appendChild(this._form);
+        this.appendChild(hint);
+      }
+
+      this._form.hass = this._hass;
+      this._form.schema = EDITOR_SCHEMA;
+      this._form.data = {
+        entity: cfg.entity || "",
+        name: cfg.name || "",
+        controls: !!cfg.controls,
+      };
+    } catch (e) {
+      // Don't kill the whole dialog — surface a readable error.
+      // eslint-disable-next-line no-console
+      console.error("smartmat-card editor failed:", e);
+      this.innerHTML = `
+        <div style="padding:12px; color:var(--error-color, #b00020); font-size:13px;">
+          SmartMat card editor failed to render (${String(e && e.message || e)}).<br>
+          Edit the YAML directly — the card itself works fine.
+        </div>
+      `;
     }
-
-    this._form.hass = this._hass;
-    this._form.schema = EDITOR_SCHEMA;
-    this._form.data = {
-      entity: this._config.entity || "",
-      name: this._config.name || "",
-      controls: !!this._config.controls,
-    };
   }
 
   _onChange(ev) {
-    const v = (ev.detail && ev.detail.value) || {};
+    const v = (ev && ev.detail && ev.detail.value) || {};
     const newConfig = {
       type: "custom:smartmat-card",
       entity: v.entity || "",
