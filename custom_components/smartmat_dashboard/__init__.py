@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import os
 
-from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
@@ -44,9 +43,11 @@ async def _async_register_card(hass: HomeAssistant) -> None:
     except ImportError:  # pragma: no cover — older HA
         hass.http.register_static_path(CARD_URL, js_path, cache_headers=True)
 
-    add_extra_js_url(hass, f"{CARD_URL}?ver={VERSION}")
+    # 只 serve 靜態檔, 不再 add_extra_js_url — 改由使用者手動加 Lovelace Resource
+    # 原因: 行動裝置 Service Worker 快取時, add_extra_js_url + Resource 兩條路會打架
+    # 導致刷新後 "Custom element doesn't exist" 間歇性發生
     domain_bucket[_CARD_REGISTERED_KEY] = True
-    _LOGGER.info("smartmat-card.js registered at %s", CARD_URL)
+    _LOGGER.info("smartmat-card.js static path registered at %s (add via Lovelace Resources)", CARD_URL)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
