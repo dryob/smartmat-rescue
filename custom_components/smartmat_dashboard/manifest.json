@@ -1,7 +1,7 @@
 {
   "domain": "smartmat_dashboard",
   "name": "SmartMat Dashboard",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "codeowners": ["@dryob"],
   "config_flow": true,
   "dependencies": ["http", "frontend"],

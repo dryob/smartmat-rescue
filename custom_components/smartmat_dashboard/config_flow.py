@@ -45,11 +45,26 @@ class SmartMatDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     VERSION = 1
 
+    def _available_weight_sensors(self) -> list[str]:
+        """Smartmat weight sensors currently in state machine, minus already-configured ones."""
+        matching = [
+            eid
+            for eid in self.hass.states.async_entity_ids("sensor")
+            if SMARTMAT_WEIGHT_RE.match(eid)
+        ]
+        taken = {
+            e.data.get(CONF_WEIGHT_ENTITY)
+            for e in self._async_current_entries(include_ignore=False)
+        }
+        return sorted(eid for eid in matching if eid not in taken)
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
         """Ask the user to pick a smartmat weight sensor."""
         errors: dict[str, str] = {}
+
+        available = self._available_weight_sensors()
 
         if user_input is not None:
             weight_eid = user_input[CONF_WEIGHT_ENTITY]
@@ -73,12 +88,14 @@ class SmartMatDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                     },
                 )
 
+        if not available:
+            return self.async_abort(reason="no_weight_sensors")
+
         schema = vol.Schema(
             {
                 vol.Required(CONF_WEIGHT_ENTITY): EntitySelector(
                     EntitySelectorConfig(
-                        domain="sensor",
-                        # Cannot regex-filter via selector, so we hint in description
+                        include_entities=available,
                     )
                 ),
                 vol.Optional(
@@ -91,9 +108,7 @@ class SmartMatDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=schema,
             errors=errors,
-            description_placeholders={
-                "hint": "Pick a sensor.smartmat_XXXX_weight entity."
-            },
+            description_placeholders={"count": str(len(available))},
         )
 
     @staticmethod

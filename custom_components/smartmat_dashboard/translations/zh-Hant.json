@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "新增 SmartMat",
-        "description": "選一個 SmartMat Lite 的重量 sensor(例:sensor.smartmat_w32190800328_weight)。{hint}",
+        "description": "選一個 SmartMat 重量 sensor(目前可選 {count} 個,已設定過的會自動隱藏)。",
         "data": {
           "weight_entity": "重量 sensor",
           "product_name": "商品名 (可選)"
@@ -14,7 +14,8 @@
       "not_a_smartmat": "這個 entity 不是 sensor.smartmat_*_weight。"
     },
     "abort": {
-      "already_configured": "這個秤已經設定過了。"
+      "already_configured": "這個秤已經設定過了。",
+      "no_weight_sensors": "找不到 sensor.smartmat_*_weight。請確認 rescue server 有跑、MQTT auto-discovery 已完成,或者全部秤都已經設定過了。"
     }
   },
   "options": {

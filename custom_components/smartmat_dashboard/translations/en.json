@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Add a SmartMat",
-        "description": "Pick the weight sensor of one SmartMat Lite (e.g. sensor.smartmat_w32190800328_weight). {hint}",
+        "description": "Pick one of the {count} available SmartMat weight sensors. Already-configured mats are hidden.",
         "data": {
           "weight_entity": "Weight sensor",
           "product_name": "Product name (optional)"
@@ -14,7 +14,8 @@
       "not_a_smartmat": "That entity is not a sensor.smartmat_*_weight sensor."
     },
     "abort": {
-      "already_configured": "This mat is already configured."
+      "already_configured": "This mat is already configured.",
+      "no_weight_sensors": "No sensor.smartmat_*_weight sensors found. Make sure the rescue server is running and MQTT discovery has fired, or every available mat is already configured."
     }
   },
   "options": {
