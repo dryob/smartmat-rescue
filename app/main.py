@@ -270,13 +270,15 @@ class Handler(BaseHTTPRequestHandler):
             # 推送最新一筆到 MQTT (舊 backlog 不個別推)
             if device_id and latest_weight is not None:
                 tare = get_tare(device_id)
+                # MQTT last_seen 用「伺服器收到時間」而非裝置自己的 measured_at
+                # 原因: 裝置 RTC 掉電後會回到 2018-10-01，不可信
                 mqtt_bridge.on_measurement(
                     device_id=device_id,
                     weight_g=latest_weight - tare,        # net
                     weight_raw_g=latest_weight,           # raw
                     battery=battery,
                     rssi=rssi,
-                    measured_at_iso=_to_iso_utc(latest_measured_at or received),
+                    measured_at_iso=_to_iso_utc(received),
                 )
 
         body = '{"m":"OK","d":"' + received + '","tz":"UTC"}'
@@ -365,7 +367,7 @@ class Handler(BaseHTTPRequestHandler):
                 weight_raw_g=row["weight_g"],
                 battery=row["battery"],
                 rssi=row["rssi"],
-                measured_at_iso=_to_iso_utc(row["measured_at"] or row["received_at"]),
+                measured_at_iso=_to_iso_utc(row["received_at"]),
             )
         self._send_json({"device_id": device_id, "tare_g": tare})
 
