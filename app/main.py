@@ -244,19 +244,17 @@ class Handler(BaseHTTPRequestHandler):
         rssi = _to_int(data.get("r"))
         rows = []
         latest_weight = None
-        latest_measured_at = None
         for md in data.get("md", []) or []:
             try:
                 weight = float(md.get("w")) if md.get("w") is not None else None
             except (TypeError, ValueError):
                 weight = None
-            measured_at = md.get("d") or received
+            # 裝置 RTC 掉電後會卡在 2018。不信任它 → measured_at 一律用 server 時間
+            # 原始 device_d 另存進備註 (md.get('d') 就是裝置自己記的 d)
+            measured_at = received
             rows.append((device_id, weight, battery, power, rssi, measured_at, received))
-            # 最新一筆是 list 的最後？不一定，但 md_entries 通常是時序。
-            # 安全起見保留「最晚 measured_at」的那筆
-            if weight is not None and (latest_measured_at is None or measured_at > latest_measured_at):
-                latest_weight = weight
-                latest_measured_at = measured_at
+            if weight is not None:
+                latest_weight = weight  # md 本身的順序當時序
         if rows:
             with db_connect() as conn:
                 conn.executemany(
