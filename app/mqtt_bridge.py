@@ -124,7 +124,7 @@ def _announce_device(device_id: str) -> None:
         "identifiers": [f"smartmat_{device_id}"],
         "name": f"SmartMat {device_id}",
         "manufacturer": "SmartMat",
-        "model": "Light",
+        "model": "Lite",
     }
     avail_topic = f"{PREFIX}/{device_id}/availability"
 
@@ -147,6 +147,15 @@ def _announce_device(device_id: str) -> None:
         "device_class": "weight",
         "state_class": "measurement",
         "suggested_display_precision": 0,
+    })
+    send("sensor", "weight_raw", {
+        "name": "Weight (raw)",
+        "state_topic": f"{PREFIX}/{device_id}/weight_raw",
+        "unit_of_measurement": "g",
+        "device_class": "weight",
+        "state_class": "measurement",
+        "suggested_display_precision": 0,
+        "entity_category": "diagnostic",
     })
     send("sensor", "battery", {
         "name": "Battery",
@@ -175,10 +184,11 @@ def _announce_device(device_id: str) -> None:
 
 def on_measurement(
     device_id: str,
-    weight_g: float | None,
+    weight_g: float | None,          # net weight (after tare)
     battery: float | None,
     rssi: int | None,
     measured_at_iso: str,
+    weight_raw_g: float | None = None,   # pre-tare raw weight (optional)
 ) -> None:
     if not _client:
         return
@@ -186,6 +196,8 @@ def on_measurement(
     _publish(f"{PREFIX}/{device_id}/availability", "online", retain=True)
     if weight_g is not None:
         _publish(f"{PREFIX}/{device_id}/weight", f"{weight_g:.2f}", retain=True)
+    if weight_raw_g is not None:
+        _publish(f"{PREFIX}/{device_id}/weight_raw", f"{weight_raw_g:.2f}", retain=True)
     if battery is not None:
         _publish(f"{PREFIX}/{device_id}/battery", f"{battery:.3f}", retain=True)
     if rssi is not None:

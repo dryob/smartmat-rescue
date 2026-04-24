@@ -53,7 +53,8 @@ def db_init() -> None:
                 wv          TEXT,
                 mv          TEXT,
                 first_seen  TEXT NOT NULL,
-                last_seen   TEXT NOT NULL
+                last_seen   TEXT NOT NULL,
+                tare_g      REAL NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS measurements (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -69,6 +70,10 @@ def db_init() -> None:
                 ON measurements (device_id, measured_at);
             """
         )
+        # Migration: 對舊資料庫補上 tare_g 欄位 (SQLite 沒有 IF NOT EXISTS for columns)
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(devices)")}
+        if "tare_g" not in cols:
+            conn.execute("ALTER TABLE devices ADD COLUMN tare_g REAL NOT NULL DEFAULT 0")
 
 
 def now_utc_str() -> str:
@@ -112,6 +117,17 @@ def _to_iso_utc(s: str) -> str:
         return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
     except (TypeError, ValueError):
         return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def get_tare(device_id: str) -> float:
+    with db_connect() as conn:
+        row = conn.execute("SELECT tare_g FROM devices WHERE id=?", (device_id,)).fetchone()
+        return float(row["tare_g"]) if row else 0.0
+
+
+def set_tare(device_id: str, tare_g: float) -> None:
+    with db_connect() as conn:
+        conn.execute("UPDATE devices SET tare_g=? WHERE id=?", (tare_g, device_id))
 
 
 # ---------- HTTP handler ----------
@@ -172,6 +188,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._list_devices()
             elif path == "/measurements":
                 self._list_measurements(parse_qs(parsed.query))
+            elif path.startswith("/devices/") and path.endswith("/tare") and self.command == "POST":
+                device_id = path[len("/devices/"):-len("/tare")]
+                self._tare(device_id, parse_qs(parsed.query))
             elif path == "/healthz":
                 self._send_json({"status": "ok"})
             else:
@@ -250,9 +269,11 @@ class Handler(BaseHTTPRequestHandler):
                 )
             # 推送最新一筆到 MQTT (舊 backlog 不個別推)
             if device_id and latest_weight is not None:
+                tare = get_tare(device_id)
                 mqtt_bridge.on_measurement(
                     device_id=device_id,
-                    weight_g=latest_weight,
+                    weight_g=latest_weight - tare,        # net
+                    weight_raw_g=latest_weight,           # raw
                     battery=battery,
                     rssi=rssi,
                     measured_at_iso=_to_iso_utc(latest_measured_at or received),
@@ -268,8 +289,8 @@ class Handler(BaseHTTPRequestHandler):
             rows = conn.execute(
                 """
                 SELECT
-                    d.id, d.wv, d.mv, d.first_seen, d.last_seen,
-                    (SELECT weight_g FROM measurements WHERE device_id=d.id ORDER BY id DESC LIMIT 1) AS last_weight,
+                    d.id, d.wv, d.mv, d.first_seen, d.last_seen, d.tare_g,
+                    (SELECT weight_g FROM measurements WHERE device_id=d.id ORDER BY id DESC LIMIT 1) AS last_weight_raw,
                     (SELECT battery  FROM measurements WHERE device_id=d.id ORDER BY id DESC LIMIT 1) AS last_battery,
                     (SELECT rssi     FROM measurements WHERE device_id=d.id ORDER BY id DESC LIMIT 1) AS last_rssi,
                     (SELECT COUNT(*) FROM measurements WHERE device_id=d.id) AS total_measurements
@@ -291,8 +312,62 @@ class Handler(BaseHTTPRequestHandler):
                 status = "stale"
             else:
                 status = "offline"
-            devices.append({**dict(r), "age_seconds": age_sec, "status": status})
+            d = dict(r)
+            raw = d["last_weight_raw"]
+            tare = d["tare_g"] or 0.0
+            d["last_weight"] = (raw - tare) if raw is not None else None  # net (displayed)
+            d["age_seconds"] = age_sec
+            d["status"] = status
+            devices.append(d)
         self._send_json({"devices": devices, "count": len(devices), "poll_interval": POLL_INTERVAL})
+
+    def _tare(self, device_id: str, qs: dict[str, list[str]]) -> None:
+        with db_connect() as conn:
+            exists = conn.execute("SELECT id FROM devices WHERE id=?", (device_id,)).fetchone()
+            if not exists:
+                self._send_json({"error": f"device not found: {device_id}"}, status=404)
+                return
+            explicit = (qs.get("g") or [None])[0]
+            if explicit is not None:
+                try:
+                    tare = float(explicit)
+                except ValueError:
+                    self._send_json({"error": "invalid ?g= value"}, status=400)
+                    return
+            else:
+                latest = conn.execute(
+                    "SELECT weight_g FROM measurements WHERE device_id=? ORDER BY id DESC LIMIT 1",
+                    (device_id,),
+                ).fetchone()
+                if not latest or latest["weight_g"] is None:
+                    self._send_json(
+                        {"error": "no measurements yet; use ?g=<grams> to set explicitly"},
+                        status=400,
+                    )
+                    return
+                tare = float(latest["weight_g"])
+        set_tare(device_id, tare)
+        LOG.info("tare set: device=%s tare_g=%.2f", device_id, tare)
+
+        # 立刻把 MQTT 的 net 重量更新 (不等下次裝置 /m)
+        with db_connect() as conn:
+            row = conn.execute(
+                """
+                SELECT weight_g, battery, rssi, measured_at, received_at
+                FROM measurements WHERE device_id=? ORDER BY id DESC LIMIT 1
+                """,
+                (device_id,),
+            ).fetchone()
+        if row and row["weight_g"] is not None:
+            mqtt_bridge.on_measurement(
+                device_id=device_id,
+                weight_g=row["weight_g"] - tare,
+                weight_raw_g=row["weight_g"],
+                battery=row["battery"],
+                rssi=row["rssi"],
+                measured_at_iso=_to_iso_utc(row["measured_at"] or row["received_at"]),
+            )
+        self._send_json({"device_id": device_id, "tare_g": tare})
 
     def _list_measurements(self, qs: dict[str, list[str]]) -> None:
         limit = max(1, min(int((qs.get("limit") or ["50"])[0]), 500))
@@ -334,11 +409,11 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(b"\r\n")
         self.wfile.write(body)
 
-    def _send_json_raw(self, body_str: str) -> None:
-        self._send_bytes(body_str.encode("utf-8"), "application/json; charset=utf-8", 200)
+    def _send_json_raw(self, body_str: str, status: int = 200) -> None:
+        self._send_bytes(body_str.encode("utf-8"), "application/json; charset=utf-8", status)
 
-    def _send_json(self, obj: Any) -> None:
-        self._send_json_raw(json.dumps(obj, separators=(",", ":")))
+    def _send_json(self, obj: Any, status: int = 200) -> None:
+        self._send_json_raw(json.dumps(obj, separators=(",", ":")), status=status)
 
     def _send_text(self, body_str: str, status: int) -> None:
         self._send_bytes(body_str.encode("utf-8"), "text/plain; charset=utf-8", status)
@@ -366,6 +441,11 @@ _DASHBOARD_HTML = """<!doctype html>
   tr:hover td { background:#161b22; }
   .footer { margin-top:20px; color:#8a94a3; font-size:11px; }
   a { color:#7cb9d9; }
+  button { background:#2a3340; color:#d7dde4; border:1px solid #3a4755;
+           padding:4px 10px; border-radius:4px; font-size:11px; cursor:pointer;
+           font-family:inherit; }
+  button:hover { background:#3a4755; }
+  .tare-info { color:#8a94a3; font-size:10px; margin-top:2px; }
 </style>
 </head>
 <body>
@@ -374,14 +454,15 @@ _DASHBOARD_HTML = """<!doctype html>
 <table>
   <thead>
     <tr>
-      <th>狀態</th><th>Device ID</th><th>重量 (g)</th><th>電量</th><th>RSSI</th>
-      <th>最後一次</th><th>上傳數</th><th>fw/hw</th>
+      <th>狀態</th><th>Device ID</th><th>淨重 (g)</th><th>電量</th><th>RSSI</th>
+      <th>最後一次</th><th>上傳數</th><th>fw/hw</th><th></th>
     </tr>
   </thead>
-  <tbody id="tbody"><tr><td class="empty" colspan="8">讀取中…</td></tr></tbody>
+  <tbody id="tbody"><tr><td class="empty" colspan="9">讀取中…</td></tr></tbody>
 </table>
 <div class="footer">
   JSON: <a href="/devices">/devices</a> · <a href="/measurements">/measurements</a>
+  · 歸零: <code>POST /devices/&lt;id&gt;/tare</code> (可加 <code>?g=X</code>)
 </div>
 <script>
 async function refresh() {
@@ -389,11 +470,15 @@ async function refresh() {
   document.getElementById('pi').textContent = data.poll_interval;
   const tb = document.getElementById('tbody');
   if (!data.devices.length) {
-    tb.innerHTML = '<tr><td class="empty" colspan="8">尚無裝置連線，把 SmartMat 插電等 5 分鐘。</td></tr>';
+    tb.innerHTML = '<tr><td class="empty" colspan="9">尚無裝置連線，把 SmartMat 插電等 5 分鐘。</td></tr>';
     return;
   }
   tb.innerHTML = data.devices.map(d => {
-    const w = d.last_weight == null ? '-' : d.last_weight.toFixed(1);
+    const raw = d.last_weight_raw;
+    const tare = d.tare_g || 0;
+    const net = d.last_weight;
+    const weightCell = net == null ? '-' :
+      `${net.toFixed(1)}<div class="tare-info">raw ${raw.toFixed(0)} − tare ${tare.toFixed(0)}</div>`;
     const b = d.last_battery == null ? '-' : (d.last_battery*100).toFixed(0) + '%';
     const rssi = d.last_rssi == null ? '-' : d.last_rssi;
     const age = d.age_seconds < 60 ? d.age_seconds+'s'
@@ -401,12 +486,22 @@ async function refresh() {
               : Math.round(d.age_seconds/3600)+'h';
     return `<tr>
       <td><span class="badge ${d.status}">${d.status}</span></td>
-      <td>${d.id}</td><td>${w}</td><td>${b}</td><td>${rssi}</td>
+      <td>${d.id}</td><td>${weightCell}</td><td>${b}</td><td>${rssi}</td>
       <td>${d.last_seen} UTC (${age} ago)</td>
       <td>${d.total_measurements}</td>
       <td>${d.wv || '-'} / ${d.mv || '-'}</td>
+      <td><button onclick="tare('${d.id}')">歸零</button></td>
     </tr>`;
   }).join('');
+}
+async function tare(id) {
+  if (!confirm('把 ' + id + ' 目前的重量設為 0?\n(可用 prompt 輸入具體 g 值, 或 Cancel 取消)')) return;
+  const raw = prompt('要用最新讀數當 0 → 留空直接按 OK\n或輸入自訂 offset(g):', '');
+  const url = raw === '' ? `/devices/${id}/tare` : `/devices/${id}/tare?g=${encodeURIComponent(raw)}`;
+  const resp = await fetch(url, {method:'POST'});
+  const body = await resp.json();
+  if (!resp.ok) { alert('失敗: ' + (body.error || resp.status)); return; }
+  refresh();
 }
 refresh(); setInterval(refresh, 15000);
 </script>
