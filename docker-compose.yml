@@ -1,0 +1,60 @@
+services:
+  smartmat:
+    build: .
+    image: smartmat-fake-api:latest
+    container_name: smartmat
+    restart: unless-stopped
+    # 用 macvlan: 容器直接拿 LAN IP，不吃 NAS 的 80 port
+    networks:
+      lan:
+        ipv4_address: ${SMARTMAT_IP}
+    volumes:
+      - ./data:/data
+    environment:
+      - LOG_LEVEL=INFO
+      - SMARTMAT_POLL_INTERVAL=300
+      - SMARTMAT_DB=/data/smartmat.db
+      - SMARTMAT_O=${SMARTMAT_O:-0}
+      - SMARTMAT_MD=${SMARTMAT_MD:-0}
+      # MQTT / HA auto-discovery (空 MQTT_HOST = 關閉)
+      - MQTT_HOST=${MQTT_HOST:-}
+      - MQTT_PORT=${MQTT_PORT:-1883}
+      - MQTT_USER=${MQTT_USER:-}
+      - MQTT_PASS=${MQTT_PASS:-}
+      - MQTT_TOPIC_PREFIX=${MQTT_TOPIC_PREFIX:-smartmat}
+      - MQTT_DISCOVERY=${MQTT_DISCOVERY:-1}
+      - MQTT_DISCOVERY_PREFIX=${MQTT_DISCOVERY_PREFIX:-homeassistant}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys;sys.exit(0 if urllib.request.urlopen('http://localhost:80/healthz',timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  dnsmasq:
+    build: ./dnsmasq
+    image: smartmat-dnsmasq:latest
+    container_name: smartmat-dns
+    restart: unless-stopped
+    networks:
+      lan:
+        ipv4_address: ${DNSMASQ_IP}
+    command:
+      - --keep-in-foreground
+      - --log-queries
+      - --no-resolv
+      - --server=1.1.1.1
+      - --server=8.8.8.8
+      # ⚠️ 關鍵: ESP8266 若拿到 TTL=0 會在 /sd 卡住。文章實測 TTL=60 OK。
+      - --local-ttl=60
+      - --auth-ttl=60
+      # DNS_TARGET_IP: dnsmasq 回給裝置的 IP。prod 時 = SMARTMAT_IP，dev 時設成 Windows IP
+      - "--host-record=measure.lite.smartmat.io,${DNS_TARGET_IP},60"
+      - "--address=/smartmat.io/${DNS_TARGET_IP}"
+      - "--address=/smartmat.io/::"
+
+networks:
+  lan:
+    external: true
+    # QNAP Container Station 上事先建好的 macvlan 網路
+    name: VBR-LAN1
