@@ -114,19 +114,32 @@ MQTT topic: `smartmat/<id>/weight` 等,retained。
 
 ### 它做什麼
 
-裝完後到 **設定 → 裝置與服務 → 新增整合 → SmartMat Dashboard**,選一個 `sensor.smartmat_*_weight`,按確定。接著:
+裝完後到 **設定 → 裝置與服務 → 新增整合 → SmartMat Dashboard**,選一個 `sensor.smartmat_*_weight`,按確定:
 
 - 自動生 4 個 entity 綁到一台虛擬裝置 (device registry):
   - `text.smartmat_<sid>_product` — 商品名 (UI 直接改)
   - `number.smartmat_<sid>_tare` — 空盤重量 g
   - `number.smartmat_<sid>_full` — 滿庫重量 g
   - `sensor.smartmat_<sid>_inventory` — 庫存 % (自動算 `(weight - tare) / (full - tare)`)
-- 自動把一個 view `inventory` (標題 `庫存秤`) 寫進 `dashboard-homio`,每台秤一張 gauge + 顏色化 alert。
-- 重複同樣流程可加第 2/3/N 台,view 會自動重建。
+- 整合自動註冊一個 **Lovelace 自訂 card** (`type: custom:smartmat-card`),不需要再手動加 resource。
+- 重複同樣流程可加第 2/3/N 台。
 
-### 閾值 (共用)
+### 加 card 到 dashboard
 
-若要依 % 上色,可選擇另外建 3 個 helper (設定 → 裝置與服務 → Helpers → Number):
+任何 dashboard 裡按 **編輯 → 新增卡片**,往下滑到 **Custom: SmartMat Card**,  
+或直接貼 YAML:
+
+```yaml
+type: custom:smartmat-card
+entity: sensor.smartmat_0328_inventory
+# name: 貓飼料  # 選填,覆蓋商品名顯示
+```
+
+一張 card 包含:可直接改的商品名、gauge、色塊 alert、空盤/滿庫一起改、最後上報時間。
+
+### 閾值 (共用,選配)
+
+若要依 % 上色,另外建 3 個 helper (設定 → 裝置與服務 → Helpers → Number):
 
 | Entity ID | 預設 |
 |---|---|
@@ -142,13 +155,12 @@ MQTT topic: `smartmat/<id>/weight` 等,retained。
 2. URL: `https://github.com/dryob/smartmat-rescue`
 3. Type: **Integration**
 4. 確定 → 從 HACS 清單點 **SmartMat Dashboard** → **Download**
-5. 重啟 HA
+5. 重啟 HA (card JS 需要重啟才會載入)
 6. 設定 → 裝置與服務 → 新增整合 → **SmartMat Dashboard**
 
 ### 前置
 
-- `dashboard-homio` 必須是 **storage-mode** (預設方式建的) dashboard,不能是 YAML-mode。若不是這個 URL path,改 `custom_components/smartmat_dashboard/const.py` 的 `DASHBOARD_URL`。
-- 需要 MQTT + 本專案 rescue server 已經在產生 `sensor.smartmat_*_weight`。
+- MQTT + 本專案 rescue server 已經在產生 `sensor.smartmat_*_weight`。
 
 ## Gotchas (救命關鍵)
 

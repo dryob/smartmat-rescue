@@ -13,7 +13,13 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 
-from .const import CONF_SHORT_ID, CONF_WEIGHT_ENTITY, DOMAIN, UID_INVENTORY
+from .const import (
+    CONF_LAST_SEEN_ENTITY,
+    CONF_SHORT_ID,
+    CONF_WEIGHT_ENTITY,
+    DOMAIN,
+    UID_INVENTORY,
+)
 
 
 async def async_setup_entry(
@@ -53,11 +59,28 @@ class MatInventorySensor(SensorEntity):
         self._hass = hass
         self._sid = entry.data[CONF_SHORT_ID]
         self._weight_eid = entry.data[CONF_WEIGHT_ENTITY]
+        self._last_seen_eid = entry.data.get(
+            CONF_LAST_SEEN_ENTITY,
+            self._weight_eid.replace("_weight", "_last_seen"),
+        )
         self._tare_eid = f"number.smartmat_{self._sid}_tare"
         self._full_eid = f"number.smartmat_{self._sid}_full"
+        self._product_eid = f"text.smartmat_{self._sid}_product"
         self._attr_unique_id = f"{DOMAIN}_{self._sid}_{UID_INVENTORY}"
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, self._sid)})
         self._attr_native_value = None
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        """Expose related entities so the custom card can auto-wire."""
+        return {
+            "short_id": self._sid,
+            "weight_entity": self._weight_eid,
+            "tare_entity": self._tare_eid,
+            "full_entity": self._full_eid,
+            "product_entity": self._product_eid,
+            "last_seen_entity": self._last_seen_eid,
+        }
 
     async def async_added_to_hass(self) -> None:
         """Track changes to any of the three inputs."""

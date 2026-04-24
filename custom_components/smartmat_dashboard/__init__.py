@@ -1,27 +1,66 @@
-"""SmartMat Dashboard — per-mat inventory tracker with auto-dashboard."""
+"""SmartMat Dashboard — per-mat inventory entities + Lovelace card."""
 from __future__ import annotations
 
 import logging
+import os
 
+from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
-from .const import CONF_SHORT_ID, CONF_WEIGHT_ENTITY, DOMAIN, PLATFORMS
-from .lovelace import async_rebuild_view
+from .const import (
+    CARD_URL,
+    CONF_SHORT_ID,
+    CONF_WEIGHT_ENTITY,
+    DOMAIN,
+    PLATFORMS,
+    VERSION,
+)
 
 _LOGGER = logging.getLogger(__name__)
+
+_CARD_REGISTERED_KEY = "_card_registered"
+
+
+async def _async_register_card(hass: HomeAssistant) -> None:
+    """Serve smartmat-card.js and add it to Lovelace's extra JS URLs (once)."""
+    domain_bucket = hass.data.setdefault(DOMAIN, {})
+    if domain_bucket.get(_CARD_REGISTERED_KEY):
+        return
+
+    js_path = os.path.join(os.path.dirname(__file__), "www", "smartmat-card.js")
+    if not os.path.exists(js_path):
+        _LOGGER.warning("smartmat-card.js not found at %s", js_path)
+        domain_bucket[_CARD_REGISTERED_KEY] = True  # don't retry
+        return
+
+    try:
+        from homeassistant.components.http import StaticPathConfig  # HA 2024.7+
+
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(CARD_URL, js_path, True)]
+        )
+    except ImportError:  # pragma: no cover — older HA
+        hass.http.register_static_path(CARD_URL, js_path, cache_headers=True)
+
+    add_extra_js_url(hass, f"{CARD_URL}?ver={VERSION}")
+    domain_bucket[_CARD_REGISTERED_KEY] = True
+    _LOGGER.info("smartmat-card.js registered at %s", CARD_URL)
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
     """Set up the integration (YAML mode unused — all UI)."""
     hass.data.setdefault(DOMAIN, {})
+    await _async_register_card(hass)
     return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up SmartMat Dashboard from a config entry (one entry = one mat)."""
     hass.data.setdefault(DOMAIN, {})
+    await _async_register_card(hass)
+
     hass.data[DOMAIN][entry.entry_id] = {
         "weight_entity": entry.data[CONF_WEIGHT_ENTITY],
         "short_id": entry.data[CONF_SHORT_ID],
@@ -38,10 +77,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     )
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-
-    # Rebuild the dashboard view with all currently-configured mats
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
-    hass.async_create_task(async_rebuild_view(hass))
 
     return True
 
@@ -51,13 +87,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if unload_ok:
         hass.data[DOMAIN].pop(entry.entry_id, None)
-        hass.async_create_task(async_rebuild_view(hass))
     return unload_ok
-
-
-async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    """Handle removal — trigger dashboard rebuild so the tile disappears."""
-    hass.async_create_task(async_rebuild_view(hass))
 
 
 async def _async_update_listener(hass: HomeAssistant, entry: ConfigEntry) -> None:
