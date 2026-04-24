@@ -1,0 +1,28 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a SmartMat",
+        "description": "Pick the weight sensor of one SmartMat Lite (e.g. sensor.smartmat_w32190800328_weight). {hint}",
+        "data": {
+          "weight_entity": "Weight sensor",
+          "product_name": "Product name (optional)"
+        }
+      }
+    },
+    "error": {
+      "not_a_smartmat": "That entity is not a sensor.smartmat_*_weight sensor."
+    },
+    "abort": {
+      "already_configured": "This mat is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "SmartMat Dashboard",
+        "description": "No options — edit product / tare / full via the entity cards."
+      }
+    }
+  }
+}

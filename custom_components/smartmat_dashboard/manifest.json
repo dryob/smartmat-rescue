@@ -1,0 +1,12 @@
+{
+  "domain": "smartmat_dashboard",
+  "name": "SmartMat Dashboard",
+  "version": "0.1.0",
+  "codeowners": ["@dryob"],
+  "config_flow": true,
+  "dependencies": ["lovelace"],
+  "documentation": "https://github.com/dryob/smartmat-rescue",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/dryob/smartmat-rescue/issues",
+  "requirements": []
+}

@@ -105,7 +105,50 @@ server 重啟後 HA (`Settings → Devices & Services → MQTT`) 會自動出現
 - `sensor.smartmat_<id>_rssi` (dBm)
 - `sensor.smartmat_<id>_last_seen` (timestamp)
 
-MQTT topic: `smartmat/<id>/weight` 等，retained。
+MQTT topic: `smartmat/<id>/weight` 等,retained。
+
+## Home Assistant Custom Integration (optional)
+
+如果你只想要 MQTT 的 raw sensor,上面那步就夠了。  
+如果想要**每個秤一張卡**、**可改商品名**、**可改空盤/滿庫重量**、**顏色化庫存顯示**,這個 repo 還附了一個 HA custom integration:`smartmat_dashboard`。
+
+### 它做什麼
+
+裝完後到 **設定 → 裝置與服務 → 新增整合 → SmartMat Dashboard**,選一個 `sensor.smartmat_*_weight`,按確定。接著:
+
+- 自動生 4 個 entity 綁到一台虛擬裝置 (device registry):
+  - `text.smartmat_<sid>_product` — 商品名 (UI 直接改)
+  - `number.smartmat_<sid>_tare` — 空盤重量 g
+  - `number.smartmat_<sid>_full` — 滿庫重量 g
+  - `sensor.smartmat_<sid>_inventory` — 庫存 % (自動算 `(weight - tare) / (full - tare)`)
+- 自動把一個 view `inventory` (標題 `庫存秤`) 寫進 `dashboard-homio`,每台秤一張 gauge + 顏色化 alert。
+- 重複同樣流程可加第 2/3/N 台,view 會自動重建。
+
+### 閾值 (共用)
+
+若要依 % 上色,可選擇另外建 3 個 helper (設定 → 裝置與服務 → Helpers → Number):
+
+| Entity ID | 預設 |
+|---|---|
+| `input_number.smartmat_threshold_critical` | 10 |
+| `input_number.smartmat_threshold_low` | 33 |
+| `input_number.smartmat_threshold_mid` | 66 |
+
+沒建也不會壞,會 fallback 到上面的預設值。
+
+### 透過 HACS 安裝
+
+1. HACS → 右上角 `⋮` → **Custom repositories**
+2. URL: `https://github.com/dryob/smartmat-rescue`
+3. Type: **Integration**
+4. 確定 → 從 HACS 清單點 **SmartMat Dashboard** → **Download**
+5. 重啟 HA
+6. 設定 → 裝置與服務 → 新增整合 → **SmartMat Dashboard**
+
+### 前置
+
+- `dashboard-homio` 必須是 **storage-mode** (預設方式建的) dashboard,不能是 YAML-mode。若不是這個 URL path,改 `custom_components/smartmat_dashboard/const.py` 的 `DASHBOARD_URL`。
+- 需要 MQTT + 本專案 rescue server 已經在產生 `sensor.smartmat_*_weight`。
 
 ## Gotchas (救命關鍵)
 
@@ -138,6 +181,8 @@ smartmat/
 │   ├── main.py              # stdlib HTTP server + dashboard + JSON API
 │   ├── mqtt_bridge.py       # MQTT publish + HA discovery
 │   └── requirements.txt     # paho-mqtt only
+├── custom_components/
+│   └── smartmat_dashboard/  # HA custom integration (HACS-installable)
 ├── dnsmasq/
 │   └── Dockerfile           # alpine + dnsmasq (多架構支援)
 ├── scripts/
