@@ -11,7 +11,7 @@
  *                         #   integration's device page instead.
  */
 
-const VERSION = "0.2.1";
+const VERSION = "0.2.3";
 
 const REL = (() => {
   try {
@@ -312,79 +312,84 @@ class SmartMatCard extends HTMLElement {
   }
 }
 
-// ---- GUI editor ----
+// ---- GUI editor (uses ha-form + HA selectors, the supported API) ----
+const EDITOR_SCHEMA = [
+  {
+    name: "entity",
+    required: true,
+    selector: {
+      entity: {
+        // Restrict to the inventory sensors this integration produces.
+        filter: { domain: "sensor", integration: "smartmat_dashboard" },
+      },
+    },
+  },
+  { name: "name", selector: { text: {} } },
+  { name: "controls", selector: { boolean: {} } },
+];
+
+const EDITOR_LABELS = {
+  entity: "Inventory sensor",
+  name: "Name override (optional)",
+  controls: "Show inline controls on card (tare / full / rename)",
+};
+
 class SmartMatCardEditor extends HTMLElement {
   setConfig(config) {
-    this._config = { ...config };
-    this._render();
+    this._config = config || {};
+    this._update();
   }
   set hass(hass) {
     this._hass = hass;
-    this._render();
+    this._update();
   }
-  _render() {
+  connectedCallback() {
+    this._update();
+  }
+
+  _update() {
     if (!this._hass) return;
-    if (this._built) {
-      // keep picker/name in sync if config changes externally
-      if (this._picker) this._picker.value = this._config.entity || "";
-      if (this._nameField) this._nameField.value = this._config.name || "";
-      if (this._controlsToggle)
-        this._controlsToggle.checked = !!this._config.controls;
-      return;
+
+    if (!this._form) {
+      this._form = document.createElement("ha-form");
+      this._form.computeLabel = (s) => EDITOR_LABELS[s.name] || s.name;
+      this._form.addEventListener("value-changed", (ev) => this._onChange(ev));
+
+      const hint = document.createElement("div");
+      hint.style.cssText =
+        "font-size:12px; color:var(--secondary-text-color); line-height:1.4; padding:8px 0 4px;";
+      hint.innerHTML =
+        "Leave <b>Show inline controls</b> off for a compact card. Edit tare / full / product name inside " +
+        "<b>Settings → Devices &amp; services → SmartMat Dashboard</b> (click the mat device).";
+
+      this.appendChild(this._form);
+      this.appendChild(hint);
     }
 
-    this.innerHTML = `
-      <div style="display:flex; flex-direction:column; gap:12px; padding:8px 0;">
-        <ha-entity-picker
-          label="Inventory sensor (sensor.smartmat_*_inventory)"
-          allow-custom-entity
-        ></ha-entity-picker>
-        <ha-textfield label="Name override (optional)"></ha-textfield>
-        <ha-formfield label="Show inline controls on card (tare / full / rename)">
-          <ha-switch></ha-switch>
-        </ha-formfield>
-        <div style="font-size:12px; color: var(--secondary-text-color); line-height:1.4;">
-          Leave the switch off for a compact read-only card. Edit tare /
-          full / product name inside
-          <b>Settings → Devices &amp; services → SmartMat Dashboard</b>
-          (click the mat device).
-        </div>
-      </div>
-    `;
-    this._picker = this.querySelector("ha-entity-picker");
-    this._nameField = this.querySelector("ha-textfield");
-    this._controlsToggle = this.querySelector("ha-switch");
-
-    this._picker.hass = this._hass;
-    this._picker.includeDomains = ["sensor"];
-    this._picker.entityFilter = (s) =>
-      s.entity_id.startsWith("sensor.smartmat_") &&
-      s.entity_id.endsWith("_inventory");
-    this._picker.value = this._config.entity || "";
-    this._nameField.value = this._config.name || "";
-    this._controlsToggle.checked = !!this._config.controls;
-
-    this._picker.addEventListener("value-changed", (e) => {
-      this._config = { ...this._config, entity: e.detail.value };
-      this._fire();
-    });
-    this._nameField.addEventListener("change", () => {
-      const v = this._nameField.value;
-      this._config = { ...this._config };
-      if (v) this._config.name = v;
-      else delete this._config.name;
-      this._fire();
-    });
-    this._controlsToggle.addEventListener("change", (e) => {
-      this._config = { ...this._config, controls: !!e.target.checked };
-      this._fire();
-    });
-
-    this._built = true;
+    this._form.hass = this._hass;
+    this._form.schema = EDITOR_SCHEMA;
+    this._form.data = {
+      entity: this._config.entity || "",
+      name: this._config.name || "",
+      controls: !!this._config.controls,
+    };
   }
-  _fire() {
+
+  _onChange(ev) {
+    const v = (ev.detail && ev.detail.value) || {};
+    const newConfig = {
+      type: "custom:smartmat-card",
+      entity: v.entity || "",
+    };
+    if (v.name) newConfig.name = v.name;
+    if (v.controls) newConfig.controls = true;
+    this._config = newConfig;
     this.dispatchEvent(
-      new CustomEvent("config-changed", { detail: { config: this._config } })
+      new CustomEvent("config-changed", {
+        detail: { config: newConfig },
+        bubbles: true,
+        composed: true,
+      })
     );
   }
 }
