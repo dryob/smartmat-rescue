@@ -11,7 +11,7 @@
  *   tap_action: { action: none }              # optional — default more-info
  */
 
-const VERSION = "0.3.1";
+const VERSION = "0.3.2";
 const RING_R = 42;                          // ring radius inside a 100-unit viewBox
 const RING_C = 2 * Math.PI * RING_R;        // ~ 263.894
 
@@ -288,12 +288,12 @@ input.title:focus { outline: none; border-bottom-color: var(--smc-color); }
   font-size: 14px;
 }
 .tile-sub {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   font-size: 12px;
   color: var(--secondary-text-color);
   min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .tile-sub .pct-inline {
   color: var(--smc-color);
@@ -301,10 +301,12 @@ input.title:focus { outline: none; border-bottom-color: var(--smc-color); }
   font-size: 13px;
   transition: color .25s ease;
 }
-.tile-sub .sep { opacity: 0.45; }
+.tile-sub .sep {
+  opacity: 0.45;
+  margin: 0 5px;
+}
+.tile-sub .weight,
 .tile-sub .seen {
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
 }
 .tile-status {
@@ -806,14 +808,15 @@ class SmartMatCard extends HTMLElement {
     const mid = getStateNum(this._hass, "input_number.smartmat_threshold_mid", 66);
     const lv = levelFor(pct, critical, low, mid, hasPct);
 
-    // Weight
+    // Weight — use non-breaking space so "2570 g" never wraps mid-unit
+    const NBSP = "\u00A0";
     const rawW = getStateStr(this._hass, weightEid, null);
     let weightStr;
     if (isUsable(rawW)) {
       const f = parseFloat(rawW);
-      weightStr = Number.isNaN(f) ? `${rawW} g` : `${Math.round(f)} g`;
+      weightStr = Number.isNaN(f) ? `${rawW}${NBSP}g` : `${Math.round(f)}${NBSP}g`;
     } else {
-      weightStr = "— g";
+      weightStr = `—${NBSP}g`;
     }
 
     const productName =
