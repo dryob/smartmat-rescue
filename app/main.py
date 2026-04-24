@@ -495,8 +495,8 @@ async function refresh() {
   }).join('');
 }
 async function tare(id) {
-  if (!confirm('把 ' + id + ' 目前的重量設為 0?\n(可用 prompt 輸入具體 g 值, 或 Cancel 取消)')) return;
-  const raw = prompt('要用最新讀數當 0 → 留空直接按 OK\n或輸入自訂 offset(g):', '');
+  const raw = prompt('把 ' + id + ' 歸零\\n留空 = 用最新讀數當 0\\n或輸入自訂 offset (g):', '');
+  if (raw === null) return;
   const url = raw === '' ? `/devices/${id}/tare` : `/devices/${id}/tare?g=${encodeURIComponent(raw)}`;
   const resp = await fetch(url, {method:'POST'});
   const body = await resp.json();
