@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 DOMAIN = "smartmat_dashboard"
-VERSION = "0.2.0"
+VERSION = "0.2.1"
 
 # Config entry keys
 CONF_WEIGHT_ENTITY = "weight_entity"

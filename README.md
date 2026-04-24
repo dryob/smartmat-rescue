@@ -132,10 +132,15 @@ MQTT topic: `smartmat/<id>/weight` 等,retained。
 ```yaml
 type: custom:smartmat-card
 entity: sensor.smartmat_0328_inventory
-# name: 貓飼料  # 選填,覆蓋商品名顯示
+# name: 貓飼料           # 選填,覆蓋商品名顯示(只視覺)
+# controls: true         # 選填(預設 false),開啟內嵌的商品名/空盤/滿庫編輯
 ```
 
-一張 card 包含:可直接改的商品名、gauge、色塊 alert、空盤/滿庫一起改、最後上報時間。
+**預設是 compact mode**:只顯示商品名、gauge、色塊 alert、最後上報時間。  
+空盤、滿庫、商品名重命名這些**設定**本來就已經是 device-bound entity,要改就去  
+**設定 → 裝置與服務 → SmartMat Dashboard → 點某台秤的 device** — 整合會列出這三個 entity 直接改。
+
+要 card 上也能改的話打開 `controls: true`(或 GUI 編輯器裡的那個 switch)。
 
 ### 閾值 (共用,選配)
 

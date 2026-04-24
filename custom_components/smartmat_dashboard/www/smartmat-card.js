@@ -1,13 +1,17 @@
 /**
  * smartmat-card.js — Lovelace custom card for SmartMat Dashboard.
  *
- * Usage in any dashboard:
+ * Usage:
  *   type: custom:smartmat-card
  *   entity: sensor.smartmat_0328_inventory
- *   name: (optional — overrides the product name shown in header)
+ *   name: 貓飼料          # optional — override displayed product name
+ *   controls: true        # optional (default false) — show inline editable
+ *                         #   product name + tare/full inputs. When false
+ *                         #   (default), edit tare/full/product in the
+ *                         #   integration's device page instead.
  */
 
-const VERSION = "0.2.0";
+const VERSION = "0.2.1";
 
 const REL = (() => {
   try {
@@ -53,9 +57,11 @@ function getStateNum(hass, eid, fallback) {
 class SmartMatCard extends HTMLElement {
   setConfig(config) {
     if (!config || !config.entity) {
-      throw new Error("smartmat-card: 'entity' is required (a sensor.smartmat_*_inventory)");
+      throw new Error(
+        "smartmat-card: 'entity' is required (a sensor.smartmat_*_inventory)"
+      );
     }
-    this._config = config;
+    this._config = { controls: false, ...config };
     this._built = false;
   }
 
@@ -69,34 +75,44 @@ class SmartMatCard extends HTMLElement {
   }
 
   static getStubConfig(hass) {
-    // Find first inventory sensor, if any
-    const first = hass && Object.keys(hass.states).find(
-      (k) => k.startsWith("sensor.smartmat_") && k.endsWith("_inventory")
-    );
+    const first =
+      hass &&
+      Object.keys(hass.states).find(
+        (k) =>
+          k.startsWith("sensor.smartmat_") && k.endsWith("_inventory")
+      );
     return { entity: first || "sensor.smartmat_XXXX_inventory" };
   }
 
   _build() {
+    const controls = !!this._config.controls;
+
+    const productEl = controls
+      ? `<input class="product editable" type="text" placeholder="未設定" aria-label="商品名" />`
+      : `<div class="product"></div>`;
+
+    const calibHtml = controls
+      ? `<div class="row calib">
+           <label class="fld">
+             <span class="lbl">空盤</span>
+             <input class="tare" type="number" step="1" min="0" />
+             <span class="unit">g</span>
+           </label>
+           <label class="fld">
+             <span class="lbl">滿庫</span>
+             <input class="full" type="number" step="1" min="0" />
+             <span class="unit">g</span>
+           </label>
+         </div>`
+      : "";
+
     this.innerHTML = `
       <ha-card>
         <div class="smc">
-          <div class="row hdr">
-            <input class="product" type="text" placeholder="未設定" aria-label="商品名" />
-          </div>
+          <div class="row hdr">${productEl}</div>
           <div class="gauge-wrap"></div>
           <div class="alrt-wrap"></div>
-          <div class="row calib">
-            <label class="fld">
-              <span class="lbl">空盤</span>
-              <input class="tare" type="number" step="1" min="0" />
-              <span class="unit">g</span>
-            </label>
-            <label class="fld">
-              <span class="lbl">滿庫</span>
-              <input class="full" type="number" step="1" min="0" />
-              <span class="unit">g</span>
-            </label>
-          </div>
+          ${calibHtml}
           <div class="seen"></div>
         </div>
         <style>
@@ -105,23 +121,20 @@ class SmartMatCard extends HTMLElement {
           .smc .row { display:flex; gap:8px; align-items:center; }
           .smc .hdr { margin-bottom: 4px; }
           .smc .product {
-            flex:1; padding:4px 6px; font-size:16px; font-weight:500;
-            background:transparent; border:none;
+            flex:1; padding:4px 6px;
+            font-size:16px; font-weight:500;
             color:var(--primary-text-color);
-            border-bottom: 1px dashed transparent;
             min-width: 0;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
           }
-          .smc .product:hover { border-bottom-color: var(--divider-color); }
-          .smc .product:focus {
-            outline:none;
-            border-bottom-color: var(--primary-color);
+          .smc .product.editable {
+            background:transparent; border:none;
+            border-bottom: 1px dashed transparent;
           }
-          .smc .gauge-wrap {
-            display:flex; justify-content:center;
-            padding: 4px 0 6px;
-          }
-          .smc ha-gauge { --gauge-color: var(--primary-color); }
-          .smc .alrt-wrap { margin: 4px 0 8px; }
+          .smc .product.editable:hover { border-bottom-color: var(--divider-color); }
+          .smc .product.editable:focus { outline:none; border-bottom-color: var(--primary-color); }
+          .smc .gauge-wrap { display:flex; justify-content:center; padding: 4px 0 6px; }
+          .smc .alrt-wrap { margin: 4px 0 6px; }
           .smc ha-alert { display:block; }
           .smc .calib { gap:10px; margin-top:6px; }
           .smc .fld {
@@ -146,7 +159,7 @@ class SmartMatCard extends HTMLElement {
             font-size: 11px;
             color: var(--secondary-text-color);
             text-align: right;
-            margin-top: 6px;
+            margin-top: 4px;
             opacity: 0.75;
           }
           .err {
@@ -157,6 +170,7 @@ class SmartMatCard extends HTMLElement {
         </style>
       </ha-card>
     `;
+
     this._el = {
       prod: this.querySelector(".product"),
       gaugeWrap: this.querySelector(".gauge-wrap"),
@@ -166,7 +180,7 @@ class SmartMatCard extends HTMLElement {
       seen: this.querySelector(".seen"),
     };
 
-    // Build ha-gauge once (if the element is registered)
+    // Gauge
     this._gauge = document.createElement("ha-gauge");
     this._gauge.setAttribute("min", "0");
     this._gauge.setAttribute("max", "100");
@@ -174,38 +188,40 @@ class SmartMatCard extends HTMLElement {
     this._gauge.value = 0;
     this._el.gaugeWrap.appendChild(this._gauge);
 
-    // ha-alert
+    // Alert
     this._alert = document.createElement("ha-alert");
     this._el.alertWrap.appendChild(this._alert);
 
-    // Event handlers (wire once)
-    this._el.prod.addEventListener("change", () => {
-      const eid = this._runtime && this._runtime.productEid;
-      if (eid) {
-        this._hass.callService("text", "set_value", {
-          entity_id: eid,
-          value: this._el.prod.value,
-        });
-      }
-    });
-    this._el.tare.addEventListener("change", () => {
-      const eid = this._runtime && this._runtime.tareEid;
-      if (eid) {
-        this._hass.callService("number", "set_value", {
-          entity_id: eid,
-          value: parseFloat(this._el.tare.value),
-        });
-      }
-    });
-    this._el.full.addEventListener("change", () => {
-      const eid = this._runtime && this._runtime.fullEid;
-      if (eid) {
-        this._hass.callService("number", "set_value", {
-          entity_id: eid,
-          value: parseFloat(this._el.full.value),
-        });
-      }
-    });
+    // Wire inputs only when controls mode is on
+    if (controls) {
+      this._el.prod.addEventListener("change", () => {
+        const eid = this._runtime && this._runtime.productEid;
+        if (eid) {
+          this._hass.callService("text", "set_value", {
+            entity_id: eid,
+            value: this._el.prod.value,
+          });
+        }
+      });
+      this._el.tare.addEventListener("change", () => {
+        const eid = this._runtime && this._runtime.tareEid;
+        if (eid && this._el.tare.value !== "") {
+          this._hass.callService("number", "set_value", {
+            entity_id: eid,
+            value: parseFloat(this._el.tare.value),
+          });
+        }
+      });
+      this._el.full.addEventListener("change", () => {
+        const eid = this._runtime && this._runtime.fullEid;
+        if (eid && this._el.full.value !== "") {
+          this._hass.callService("number", "set_value", {
+            entity_id: eid,
+            value: parseFloat(this._el.full.value),
+          });
+        }
+      });
+    }
 
     this._built = true;
   }
@@ -220,7 +236,9 @@ class SmartMatCard extends HTMLElement {
     const invEid = this._config.entity;
     const inv = this._hass.states[invEid];
     if (!inv) {
-      this._renderError(`Entity <code>${invEid}</code> not found. Did you install the SmartMat Dashboard integration and add a mat?`);
+      this._renderError(
+        `Entity <code>${invEid}</code> not found. Install SmartMat Dashboard integration and add a mat first.`
+      );
       return;
     }
     const a = inv.attributes || {};
@@ -244,8 +262,6 @@ class SmartMatCard extends HTMLElement {
 
     const weightStr = getStateStr(this._hass, weightEid, "—");
     const productName = this._config.name || getStateStr(this._hass, productEid, `Mat ${sid}`);
-    const tareVal = getStateStr(this._hass, tareEid, "0");
-    const fullVal = getStateStr(this._hass, fullEid, "1000");
     const lastSeen = getStateStr(this._hass, lastSeenEid, null);
 
     let alertKind, emoji, levelLabel;
@@ -255,36 +271,48 @@ class SmartMatCard extends HTMLElement {
     else if (pct < mid)      { alertKind = "info";    emoji = "🟡"; levelLabel = "中";     }
     else                     { alertKind = "success"; emoji = "✅"; levelLabel = "充足";   }
 
-    // Don't trample inputs the user is editing
+    // Product name — input vs div
     const ae = document.activeElement;
-    if (ae !== this._el.prod) this._el.prod.value = productName || "";
-    if (ae !== this._el.tare) this._el.tare.value = tareVal;
-    if (ae !== this._el.full) this._el.full.value = fullVal;
-
-    this._gauge.value = hasPct ? Math.max(0, Math.min(100, pct)) : 0;
-    if (hasPct) {
-      // Colour the gauge needle per level
-      const color = alertKind === "error" ? "var(--error-color, #d32f2f)"
-                  : alertKind === "warning" ? "var(--warning-color, #f57c00)"
-                  : alertKind === "info"    ? "var(--info-color, #fbc02d)"
-                  : "var(--success-color, #388e3c)";
-      this._gauge.style.setProperty("--gauge-color", color);
+    if (this._el.prod.tagName === "INPUT") {
+      if (ae !== this._el.prod) this._el.prod.value = productName || "";
+    } else {
+      this._el.prod.textContent = productName || "";
     }
 
+    // Tare / Full — only when controls present
+    if (this._el.tare) {
+      const tareVal = getStateStr(this._hass, tareEid, "0");
+      if (ae !== this._el.tare) this._el.tare.value = tareVal;
+    }
+    if (this._el.full) {
+      const fullVal = getStateStr(this._hass, fullEid, "1000");
+      if (ae !== this._el.full) this._el.full.value = fullVal;
+    }
+
+    // Gauge
+    this._gauge.value = hasPct ? Math.max(0, Math.min(100, pct)) : 0;
+    const color = alertKind === "error" ? "var(--error-color, #d32f2f)"
+                : alertKind === "warning" ? "var(--warning-color, #f57c00)"
+                : alertKind === "info"    ? "var(--info-color, #fbc02d)"
+                : "var(--success-color, #388e3c)";
+    this._gauge.style.setProperty("--gauge-color", color);
+
+    // Alert
     this._alert.setAttribute("alert-type", alertKind);
     this._alert.innerHTML = hasPct
       ? `${emoji} ${levelLabel} · ${Math.round(pct)}% · ${weightStr} g`
       : `${emoji} 無資料`;
 
+    // Last seen
     this._el.seen.textContent = `上報: ${fmtRel(lastSeen)}`;
   }
 
   getCardSize() {
-    return 4;
+    return this._config && this._config.controls ? 4 : 3;
   }
 }
 
-// ---- Minimal GUI editor (just entity picker + optional name) ----
+// ---- GUI editor ----
 class SmartMatCardEditor extends HTMLElement {
   setConfig(config) {
     this._config = { ...config };
@@ -296,7 +324,14 @@ class SmartMatCardEditor extends HTMLElement {
   }
   _render() {
     if (!this._hass) return;
-    if (this._built) return;
+    if (this._built) {
+      // keep picker/name in sync if config changes externally
+      if (this._picker) this._picker.value = this._config.entity || "";
+      if (this._nameField) this._nameField.value = this._config.name || "";
+      if (this._controlsToggle)
+        this._controlsToggle.checked = !!this._config.controls;
+      return;
+    }
 
     this.innerHTML = `
       <div style="display:flex; flex-direction:column; gap:12px; padding:8px 0;">
@@ -305,10 +340,20 @@ class SmartMatCardEditor extends HTMLElement {
           allow-custom-entity
         ></ha-entity-picker>
         <ha-textfield label="Name override (optional)"></ha-textfield>
+        <ha-formfield label="Show inline controls on card (tare / full / rename)">
+          <ha-switch></ha-switch>
+        </ha-formfield>
+        <div style="font-size:12px; color: var(--secondary-text-color); line-height:1.4;">
+          Leave the switch off for a compact read-only card. Edit tare /
+          full / product name inside
+          <b>Settings → Devices &amp; services → SmartMat Dashboard</b>
+          (click the mat device).
+        </div>
       </div>
     `;
     this._picker = this.querySelector("ha-entity-picker");
     this._nameField = this.querySelector("ha-textfield");
+    this._controlsToggle = this.querySelector("ha-switch");
 
     this._picker.hass = this._hass;
     this._picker.includeDomains = ["sensor"];
@@ -317,6 +362,7 @@ class SmartMatCardEditor extends HTMLElement {
       s.entity_id.endsWith("_inventory");
     this._picker.value = this._config.entity || "";
     this._nameField.value = this._config.name || "";
+    this._controlsToggle.checked = !!this._config.controls;
 
     this._picker.addEventListener("value-changed", (e) => {
       this._config = { ...this._config, entity: e.detail.value };
@@ -324,9 +370,16 @@ class SmartMatCardEditor extends HTMLElement {
     });
     this._nameField.addEventListener("change", () => {
       const v = this._nameField.value;
-      this._config = { ...this._config, name: v || undefined };
+      this._config = { ...this._config };
+      if (v) this._config.name = v;
+      else delete this._config.name;
       this._fire();
     });
+    this._controlsToggle.addEventListener("change", (e) => {
+      this._config = { ...this._config, controls: !!e.target.checked };
+      this._fire();
+    });
+
     this._built = true;
   }
   _fire() {
@@ -348,7 +401,8 @@ if (!window.customCards.find((c) => c.type === "smartmat-card")) {
   window.customCards.push({
     type: "smartmat-card",
     name: "SmartMat Card",
-    description: "SmartMat Lite per-mat inventory tile (gauge + alert + inline calibration)",
+    description:
+      "SmartMat Lite per-mat inventory tile (gauge + alert + last seen). Settings live in the integration's device page.",
     preview: false,
     documentationURL: "https://github.com/dryob/smartmat-rescue",
   });
