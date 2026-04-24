@@ -1,6 +1,6 @@
-# SmartMat Light protocol notes
+# SmartMat Lite protocol notes
 
-本文件整理 SmartMat Light 裝置的 API 協定細節，供本專案實作參考。
+本文件整理 SmartMat Lite 裝置的 API 協定細節，供本專案實作參考。
 內容主要來自 **@kitazaki** 的文章的技術部分 (Wireshark 抓包 + 裝置 UART debug log)。
 
 > **來源 (原文)：**
@@ -194,7 +194,7 @@ Connection: Keep-Alive
 {"id":"W42200500161","wv":"2.08","mv":"15"}
 ```
 
-- `X-SS-Key`: 寫死在 firmware 的 API key，所有 SmartMat Light 共用同一個
+- `X-SS-Key`: 寫死在 firmware 的 API key，所有 SmartMat Lite 共用同一個
 - `wv`: firmware version (觀察到 2.08)
 - `mv`: hardware version (觀察到 15)
 

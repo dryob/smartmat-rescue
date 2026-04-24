@@ -1,4 +1,4 @@
-"""SmartMat Light fake API — pure Python stdlib.
+"""SmartMat Lite fake API — pure Python stdlib.
 
 用 http.server (HTTP/1.0 + Title-Case headers) 而不是 uvicorn，因為
 ESP8266 HTTPClient 對 HTTP/1.1 + 全小寫 headers 的回應處理有問題 —

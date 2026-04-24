@@ -1,8 +1,8 @@
-# SmartMat Light Rescue Server
+# SmartMat Lite Rescue Server
 
 [繁體中文](README.md) · [English](README.en.md) · **日本語**
 
-**2025-09-30 にサービス終了した** [SmartMat Light](https://service.lite.smartmat.io/) を自宅サーバーで蘇らせるプロジェクトです。デバイスの改造は不要 — `measure.lite.smartmat.io` の DNS 応答をこのサーバーに向けるだけで、既存デバイスがそのまま動き続けます。
+**2025-09-30 にサービス終了した** [SmartMat Lite](https://service.lite.smartmat.io/) を自宅サーバーで蘇らせるプロジェクトです。デバイスの改造は不要 — `measure.lite.smartmat.io` の DNS 応答をこのサーバーに向けるだけで、既存デバイスがそのまま動き続けます。
 
 > 本家は [@kitazaki さんの Qiita 記事](https://qiita.com/kitazaki/items/37cc80ddca2ca43c3c04) の逆解析を元にしています。原著者は Raspberry Pi を Wi-Fi AP 化して Python / Node.js / Node-RED サーバーを立てる方式。本プロジェクトは **NAS + Docker (macvlan)** 構成にし、家の Wi-Fi をそのまま使えるようにしました。
 

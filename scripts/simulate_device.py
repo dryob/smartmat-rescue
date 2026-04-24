@@ -1,4 +1,4 @@
-"""Simulate a SmartMat Light device's call sequence.
+"""Simulate a SmartMat Lite device's call sequence.
 
 Usage:
     python scripts/simulate_device.py                         # one full cycle

@@ -1,8 +1,8 @@
-# SmartMat Light Rescue Server
+# SmartMat Lite Rescue Server
 
 [繁體中文](README.md) · **English** · [日本語](README.ja.md)
 
-A self-hosted cloud replacement for [SmartMat Light](https://service.lite.smartmat.io/) weight-measuring auto-reorder mats, keeping them working **after the official service shutdown on 2025-09-30**. No device modification required — just redirect the DNS of `measure.lite.smartmat.io` to this server.
+A self-hosted cloud replacement for [SmartMat Lite](https://service.lite.smartmat.io/) weight-measuring auto-reorder mats, keeping them working **after the official service shutdown on 2025-09-30**. No device modification required — just redirect the DNS of `measure.lite.smartmat.io` to this server.
 
 > Based on the excellent reverse-engineering work in [@kitazaki's Qiita article](https://qiita.com/kitazaki/items/37cc80ddca2ca43c3c04). The original uses a Raspberry Pi as a Wi-Fi access point with Python / Node.js / Node-RED servers. This project uses **NAS + Docker (macvlan)** so you can keep using your existing home Wi-Fi without setting up a separate AP.
 
