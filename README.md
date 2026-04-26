@@ -4,6 +4,8 @@
 
 為 [SmartMat Lite](https://service.lite.smartmat.io/) 自建的本地替代雲端伺服器，在官方服務 **2025-09-30 終止後**讓裝置繼續運作。裝置不需改機，只要把 `measure.lite.smartmat.io` 的 DNS 導到這台服務就接上了。
 
+wifi pw:smartmat
+
 > 本專案基於 [@kitazaki 的 Qiita 文章](https://qiita.com/kitazaki/items/37cc80ddca2ca43c3c04)。原作者示範用 Raspberry Pi 當 Wi-Fi AP + Python/Node.js/Node-RED server。此版改用 **NAS + Docker (macvlan)**，讓家裡沿用現有 Wi-Fi 不用另外架 AP。
 
 ## 功能
