@@ -28,6 +28,10 @@ logging.basicConfig(
 
 DB_PATH = Path(os.getenv("SMARTMAT_DB", "/data/smartmat.db"))
 POLL_INTERVAL = int(os.getenv("SMARTMAT_POLL_INTERVAL", "300"))
+# Hard cap on incoming POST body. ESP8266 backlog dumps observed ~1100 bytes;
+# 256 KB is comfortably above that and small enough to reject obvious abuse cheaply.
+_MAX_BODY_BYTES = int(os.getenv("SMARTMAT_MAX_BODY_BYTES", "262144"))
+_MAX_LIST_LIMIT = 500
 UPSTREAM_BASE = os.getenv(
     "SMARTMAT_UPSTREAM_BASE",
     "http://measure.lite.smartmat.io/v1/device/version2",
@@ -39,13 +43,19 @@ PORT = int(os.getenv("PORT", "80"))
 
 def db_connect() -> sqlite3.Connection:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10.0)
     conn.row_factory = sqlite3.Row
+    # busy_timeout = 10s; if another writer holds the lock, retry instead of bailing
+    conn.execute("PRAGMA busy_timeout = 10000")
     return conn
 
 
 def db_init() -> None:
     with db_connect() as conn:
+        # WAL gives us concurrent readers + one writer + crash safety.
+        # synchronous=NORMAL is the recommended pairing for WAL on consumer hardware.
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS devices (
@@ -159,14 +169,36 @@ class Handler(BaseHTTPRequestHandler):
         path = parsed.path
         body_bytes = b""
         if self.command == "POST":
-            n = int(self.headers.get("Content-Length") or 0)
+            # 解析 Content-Length 一定要驗證 — 畸形值 (負、非數字、超大) 不能直接 int()
+            raw_cl = self.headers.get("Content-Length") or "0"
+            try:
+                n = int(raw_cl)
+            except (TypeError, ValueError):
+                self._send_text("invalid Content-Length", 400)
+                return
+            if n < 0 or n > _MAX_BODY_BYTES:
+                self._send_text("Content-Length out of range", 411 if n < 0 else 413)
+                return
             if n > 0:
-                body_bytes = self.rfile.read(n)
+                try:
+                    body_bytes = self.rfile.read(n)
+                except (ConnectionError, OSError):
+                    return  # client gone, nothing more to do
 
         if path.startswith("/v1/device/"):
-            # 裝置除錯: 連 headers 一起紀錄
-            hdrs = {k: v for k, v in self.headers.items()}
-            LOG.info("%s %s headers=%s body=%s", self.command, path, hdrs, body_bytes.decode(errors="replace"))
+            # 裝置端點: headers + body 用 DEBUG 級別 (避免 INFO 把 X-SS-Key 等敏感頭印滿)
+            if LOG.isEnabledFor(logging.DEBUG):
+                hdrs = {k: v for k, v in self.headers.items()}
+                LOG.debug("%s %s headers=%s body=%s",
+                          self.command, path, hdrs, body_bytes.decode(errors="replace"))
+            else:
+                # INFO 只印路徑跟 device id，不暴露完整 body 跟 headers
+                try:
+                    quick = json.loads(body_bytes) if body_bytes else {}
+                    did = quick.get("id") if isinstance(quick, dict) else None
+                except Exception:
+                    did = None
+                LOG.info("%s %s id=%s", self.command, path, did)
 
         try:
             data = json.loads(body_bytes) if body_bytes else {}
@@ -194,10 +226,17 @@ class Handler(BaseHTTPRequestHandler):
             elif path == "/healthz":
                 self._send_json({"status": "ok"})
             else:
-                self._send_text("OK", 200)
+                # Unknown path → 404 (was: silent 200, hides client misbehavior)
+                self._send_text("not found", 404)
+        except (BrokenPipeError, ConnectionResetError):
+            # client disconnected mid-response; nothing else we can do
+            return
         except Exception:
             LOG.exception("handler error")
-            self._send_text("internal error", 500)
+            try:
+                self._send_text("internal error", 500)
+            except (BrokenPipeError, ConnectionResetError):
+                pass
 
     # ---- device endpoints (match article verbatim) ----
 
@@ -234,11 +273,24 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json_raw(body)
 
     def _measurement(self, data: dict[str, Any]) -> None:
+        # Validate payload shape — return 400 instead of 500 on bad input.
+        if not isinstance(data, dict):
+            self._send_text("payload must be a JSON object", 400)
+            return
         device_id = data.get("id")
-        if device_id:
-            upsert_device(device_id, None, None)
-            # 即使沒有 weight (空 md array 或 weight=None) 也要更新 MQTT last_seen
-            mqtt_bridge.on_device_seen(device_id)
+        if not isinstance(device_id, str) or not device_id:
+            self._send_text("missing or invalid 'id'", 400)
+            return
+        md_list = data.get("md")
+        if md_list is None:
+            md_list = []
+        if not isinstance(md_list, list):
+            self._send_text("'md' must be a list", 400)
+            return
+
+        upsert_device(device_id, None, None)
+        # 即使沒有 weight (空 md array 或 weight=None) 也要更新 MQTT last_seen
+        mqtt_bridge.on_device_seen(device_id)
 
         received = now_utc_str()
         battery = _to_float(data.get("b"))
@@ -246,7 +298,9 @@ class Handler(BaseHTTPRequestHandler):
         rssi = _to_int(data.get("r"))
         rows = []
         latest_weight = None
-        for md in data.get("md", []) or []:
+        for md in md_list:
+            if not isinstance(md, dict):
+                continue  # skip malformed entries instead of crashing
             try:
                 weight = float(md.get("w")) if md.get("w") is not None else None
             except (TypeError, ValueError):
@@ -372,7 +426,12 @@ class Handler(BaseHTTPRequestHandler):
         self._send_json({"device_id": device_id, "tare_g": tare})
 
     def _list_measurements(self, qs: dict[str, list[str]]) -> None:
-        limit = max(1, min(int((qs.get("limit") or ["50"])[0]), 500))
+        raw_limit = (qs.get("limit") or ["50"])[0]
+        try:
+            limit = max(1, min(int(raw_limit), _MAX_LIST_LIMIT))
+        except (TypeError, ValueError):
+            self._send_json({"error": "invalid 'limit'"}, status=400)
+            return
         device_id = (qs.get("device_id") or [None])[0]
         with db_connect() as conn:
             if device_id:
@@ -396,20 +455,28 @@ class Handler(BaseHTTPRequestHandler):
         # 匹配真實 envoy cloud: Date, Content-Type, Content-Length, Connection, x-envoy-*, server
         import email.utils as _eu
         self.log_request(status)
-        self.wfile.write(f"HTTP/1.1 {status} {self.responses[status][0]}\r\n".encode())
+        # responses dict has all standard codes; fall back to "OK" for anything unusual
+        reason = self.responses.get(status, ("Unknown",))[0]
         date_val = _eu.formatdate(timeval=None, localtime=False, usegmt=True)
-        hdrs = [
-            ("Date", date_val),
-            ("Content-Type", content_type),
-            ("Content-Length", str(len(body))),
-            ("Connection", "keep-alive"),
-            ("x-envoy-upstream-service-time", "10"),
-            ("server", "envoy"),
-        ]
-        for k, v in hdrs:
-            self.wfile.write(f"{k}: {v}\r\n".encode())
-        self.wfile.write(b"\r\n")
-        self.wfile.write(body)
+        try:
+            self.wfile.write(f"HTTP/1.1 {status} {reason}\r\n".encode())
+            hdrs = [
+                ("Date", date_val),
+                ("Content-Type", content_type),
+                ("Content-Length", str(len(body))),
+                ("Connection", "keep-alive"),
+                ("x-envoy-upstream-service-time", "10"),
+                ("server", "envoy"),
+            ]
+            for k, v in hdrs:
+                self.wfile.write(f"{k}: {v}\r\n".encode())
+            self.wfile.write(b"\r\n")
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError) as e:
+            # client gave up before we finished writing — log at debug, don't try again
+            LOG.debug("response write failed (client gone): %s", e)
+            # mark this connection unusable so handle() loop exits cleanly
+            self.close_connection = True
 
     def _send_json_raw(self, body_str: str, status: int = 200) -> None:
         self._send_bytes(body_str.encode("utf-8"), "application/json; charset=utf-8", status)

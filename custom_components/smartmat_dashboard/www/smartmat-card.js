@@ -101,6 +101,10 @@ ha-card {
 }
 .smc {
   --smc-color: var(--primary-color);
+  /* Older mobile WebViews (iOS < 16.2, Chrome Android < 111) don't support
+   * color-mix(). Plain rgba() fallbacks come first; modern browsers override. */
+  --smc-soft: rgba(33, 150, 243, 0.14);
+  --smc-softer: rgba(33, 150, 243, 0.08);
   --smc-soft: color-mix(in srgb, var(--smc-color) 14%, transparent);
   --smc-softer: color-mix(in srgb, var(--smc-color) 8%, transparent);
   position: relative;
@@ -338,6 +342,8 @@ input.title:focus { outline: none; border-bottom-color: var(--smc-color); }
   position: absolute;
   left: 0; right: 0; bottom: 0;
   height: 0%;
+  /* Fallback: plain semi-transparent fill for old mobile WebViews. */
+  background: rgba(33, 150, 243, 0.25);
   background: linear-gradient(
     to top,
     color-mix(in srgb, var(--smc-color) 45%, transparent),
@@ -353,6 +359,7 @@ input.title:focus { outline: none; border-bottom-color: var(--smc-color); }
   content: "";
   position: absolute;
   top: -2px; left: 0; right: 0; height: 2px;
+  background: rgba(33, 150, 243, 0.5);
   background: color-mix(in srgb, var(--smc-color) 65%, transparent);
   opacity: 0.8;
 }
@@ -768,11 +775,25 @@ class SmartMatCard extends HTMLElement {
     return t.action !== "none";
   }
 
-  _renderError(msg) {
-    this.shadowRoot.innerHTML = `
-      <style>${CARD_CSS}</style>
-      <ha-card><div class="err">${msg}</div></ha-card>
-    `;
+  _renderError(msg, codeFragment) {
+    // Build via DOM, never innerHTML with user data — entity ids are admin-
+    // controlled but escaping is cheap and removes the whole class of issue.
+    const sr = this.shadowRoot;
+    sr.replaceChildren();
+    const styleEl = document.createElement("style");
+    styleEl.textContent = CARD_CSS;
+    const card = document.createElement("ha-card");
+    const div = document.createElement("div");
+    div.className = "err";
+    div.textContent = msg;
+    if (codeFragment) {
+      const code = document.createElement("code");
+      code.textContent = codeFragment;
+      div.appendChild(document.createTextNode(" "));
+      div.appendChild(code);
+    }
+    card.appendChild(div);
+    sr.append(styleEl, card);
     this._built = false;
   }
 
@@ -782,7 +803,8 @@ class SmartMatCard extends HTMLElement {
     const inv = this._hass.states[invEid];
     if (!inv) {
       this._renderError(
-        `Entity <code>${invEid}</code> not found. Add a mat via 設定 → 裝置與服務 → SmartMat Dashboard first.`
+        "Entity not found. Add a mat via 設定 → 裝置與服務 → SmartMat Dashboard first:",
+        invEid
       );
       return;
     }

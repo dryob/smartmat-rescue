@@ -1,11 +1,7 @@
 """Computed inventory-% sensor."""
 from __future__ import annotations
 
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorStateClass,
-)
+from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import PERCENTAGE
 from homeassistant.core import HomeAssistant, callback
@@ -52,7 +48,8 @@ class MatInventorySensor(SensorEntity):
     _attr_icon = "mdi:gauge"
     _attr_native_unit_of_measurement = PERCENTAGE
     _attr_state_class = SensorStateClass.MEASUREMENT
-    _attr_device_class = SensorDeviceClass.BATTERY
+    # No device_class — "battery" was wrong (this is inventory %, not a battery
+    # remaining %). HA has no semantic class for "% of full" so leave it off.
     _attr_should_poll = False
 
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:

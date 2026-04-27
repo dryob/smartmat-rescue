@@ -27,12 +27,20 @@ from .const import (
 SMARTMAT_WEIGHT_RE = re.compile(r"^sensor\.smartmat_([a-z0-9]+)_weight$")
 
 
-def _short_id_from_weight(entity_id: str) -> str | None:
-    """Extract last-4 sid from sensor.smartmat_XXXX_weight."""
+def _device_id_from_weight(entity_id: str) -> str | None:
+    """Extract the full device id from sensor.smartmat_XXXX_weight.
+
+    The full id (e.g. 'w42200500161') guarantees uniqueness — using last-4
+    chars caused config-entry collisions when two devices shared a suffix.
+    """
     m = SMARTMAT_WEIGHT_RE.match(entity_id)
     if not m:
         return None
-    return m.group(1)[-4:]
+    return m.group(1)
+
+
+# Backwards-compat alias for any existing imports.
+_short_id_from_weight = _device_id_from_weight
 
 
 def _last_seen_from_weight(entity_id: str) -> str:
@@ -43,7 +51,9 @@ def _last_seen_from_weight(entity_id: str) -> str:
 class SmartMatDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """One config entry per mat."""
 
-    VERSION = 1
+    # v2: CONF_SHORT_ID holds the FULL device id (was last-4 chars in v1, which
+    # caused unique_id collisions for devices that share a suffix).
+    VERSION = 2
 
     def _available_weight_sensors(self) -> list[str]:
         """Smartmat weight sensors currently in state machine, minus already-configured ones."""
@@ -68,20 +78,26 @@ class SmartMatDashboardConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         if user_input is not None:
             weight_eid = user_input[CONF_WEIGHT_ENTITY]
-            sid = _short_id_from_weight(weight_eid)
-            if sid is None:
+            device_id = _device_id_from_weight(weight_eid)
+            if device_id is None:
                 errors[CONF_WEIGHT_ENTITY] = "not_a_smartmat"
             else:
-                await self.async_set_unique_id(f"mat_{sid}")
+                # unique_id uses the FULL device id — distinct devices that
+                # share a 4-char suffix would otherwise collide.
+                await self.async_set_unique_id(f"mat_{device_id}")
                 self._abort_if_unique_id_configured()
 
-                title = user_input.get(CONF_PRODUCT_NAME) or f"SmartMat {sid}"
+                # Display: short suffix is friendlier in titles. Stored
+                # CONF_SHORT_ID keeps the FULL id so all entity unique_ids
+                # downstream are collision-free.
+                short = device_id[-4:]
+                title = user_input.get(CONF_PRODUCT_NAME) or f"SmartMat {short}"
                 return self.async_create_entry(
                     title=title,
                     data={
                         CONF_WEIGHT_ENTITY: weight_eid,
                         CONF_LAST_SEEN_ENTITY: _last_seen_from_weight(weight_eid),
-                        CONF_SHORT_ID: sid,
+                        CONF_SHORT_ID: device_id,
                         CONF_PRODUCT_NAME: user_input.get(
                             CONF_PRODUCT_NAME, DEFAULT_PRODUCT_NAME
                         ),

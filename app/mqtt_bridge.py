@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import threading
+import time
 from typing import Any
 
 LOG = logging.getLogger("smartmat.mqtt")
@@ -32,10 +33,15 @@ CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "smartmat-bridge")
 PREFIX = os.getenv("MQTT_TOPIC_PREFIX", "smartmat").rstrip("/")
 DISCOVERY = os.getenv("MQTT_DISCOVERY", "1") not in ("0", "false", "")
 DISCOVERY_PREFIX = os.getenv("MQTT_DISCOVERY_PREFIX", "homeassistant").rstrip("/")
+# 多久沒看到 device 就 publish offline (秒). 預設 4× 上傳週期 = 20 分鐘.
+STALE_AFTER_SEC = int(os.getenv("MQTT_STALE_AFTER_SEC", "1200"))
 
 _client = None
 _announced: set[str] = set()
+_last_seen_at: dict[str, float] = {}        # device_id -> monotonic ts of last check-in
+_offline_marked: set[str] = set()           # device_ids we've already published offline for
 _lock = threading.Lock()
+_watchdog_stop = threading.Event()
 
 # set by start() — called on (re)connect to re-publish discovery for all known devices
 _reannounce_cb = lambda: None  # noqa: E731
@@ -96,20 +102,65 @@ def start(reannounce_cb=None) -> None:
     try:
         _client.connect_async(HOST, PORT, keepalive=60)
         _client.loop_start()
-        LOG.info("MQTT bridge started -> %s:%s prefix=%s discovery=%s",
-                 HOST, PORT, PREFIX, DISCOVERY)
+        # Stale-watchdog: marks devices offline in HA when they stop checking in.
+        t = threading.Thread(target=_stale_watchdog, daemon=True, name="mqtt-stale-watchdog")
+        t.start()
+        LOG.info("MQTT bridge started -> %s:%s prefix=%s discovery=%s stale_after=%ss",
+                 HOST, PORT, PREFIX, DISCOVERY, STALE_AFTER_SEC)
     except Exception:
         LOG.exception("MQTT connect failed; bridge disabled")
         _client = None
 
 
-def _publish(topic: str, payload: str, retain: bool = False) -> None:
+def _stale_watchdog() -> None:
+    """Periodically mark devices offline in HA if last_seen is older than STALE_AFTER_SEC."""
+    interval = max(30, STALE_AFTER_SEC // 4)  # check 4× per stale window, min 30s
+    while not _watchdog_stop.wait(interval):
+        if not _client:
+            continue
+        now = time.monotonic()
+        with _lock:
+            stale = [
+                did for did, ts in _last_seen_at.items()
+                if now - ts > STALE_AFTER_SEC and did not in _offline_marked
+            ]
+        for did in stale:
+            _publish(f"{PREFIX}/{did}/availability", "offline", retain=True)
+            with _lock:
+                _offline_marked.add(did)
+            LOG.info("device %s marked offline (last_seen %.0fs ago)",
+                     did, now - _last_seen_at.get(did, now))
+
+
+def _publish(topic: str, payload: str, retain: bool = False, qos: int = 0) -> bool:
+    """Fire-and-forget publish. Returns True if paho accepted the message."""
     if not _client:
-        return
+        return False
     try:
-        _client.publish(topic, payload, qos=0, retain=retain)
+        info = _client.publish(topic, payload, qos=qos, retain=retain)
     except Exception:
         LOG.exception("MQTT publish failed topic=%s", topic)
+        return False
+    return getattr(info, "rc", 0) == 0
+
+
+def _publish_reliable(topic: str, payload: str, retain: bool = True, timeout: float = 2.0) -> bool:
+    """Publish with QoS 1 + wait for broker ack. Used for HA discovery configs.
+
+    Returns True only if broker confirmed receipt within `timeout` seconds.
+    """
+    if not _client:
+        return False
+    try:
+        info = _client.publish(topic, payload, qos=1, retain=retain)
+        if getattr(info, "rc", 0) != 0:
+            return False
+        # paho's wait_for_publish blocks until ack (or until disconnect).
+        info.wait_for_publish(timeout=timeout)
+        return info.is_published()
+    except Exception:
+        LOG.exception("MQTT reliable publish failed topic=%s", topic)
+        return False
 
 
 def _announce_device(device_id: str) -> None:
@@ -118,7 +169,6 @@ def _announce_device(device_id: str) -> None:
     with _lock:
         if device_id in _announced:
             return
-        _announced.add(device_id)
 
     dev_info = {
         "identifiers": [f"smartmat_{device_id}"],
@@ -127,8 +177,10 @@ def _announce_device(device_id: str) -> None:
         "model": "Lite",
     }
     avail_topic = f"{PREFIX}/{device_id}/availability"
+    all_ok = True
 
     def send(component: str, kind: str, cfg: dict[str, Any]) -> None:
+        nonlocal all_ok
         topic = f"{DISCOVERY_PREFIX}/{component}/smartmat_{device_id}_{kind}/config"
         base = {
             "availability_topic": avail_topic,
@@ -138,7 +190,10 @@ def _announce_device(device_id: str) -> None:
             "device": dev_info,
         }
         base.update(cfg)
-        _publish(topic, json.dumps(base, separators=(",", ":")), retain=True)
+        # Discovery is QoS 1 + wait for broker ack. If broker rejects or times out,
+        # we leave _announced unchanged so the next event retries.
+        if not _publish_reliable(topic, json.dumps(base, separators=(",", ":")), retain=True):
+            all_ok = False
 
     send("sensor", "weight", {
         "name": "Weight",
@@ -179,7 +234,20 @@ def _announce_device(device_id: str) -> None:
         "device_class": "timestamp",
         "entity_category": "diagnostic",
     })
-    LOG.info("HA discovery announced for %s", device_id)
+    if all_ok:
+        with _lock:
+            _announced.add(device_id)
+        LOG.info("HA discovery announced for %s", device_id)
+    else:
+        LOG.warning("HA discovery for %s: some configs not acked, will retry", device_id)
+
+
+def _bump_last_seen(device_id: str) -> None:
+    """Track that we just saw this device; clear any prior offline state."""
+    now = time.monotonic()
+    with _lock:
+        _last_seen_at[device_id] = now
+        _offline_marked.discard(device_id)
 
 
 def on_measurement(
@@ -193,6 +261,7 @@ def on_measurement(
     if not _client:
         return
     _announce_device(device_id)
+    _bump_last_seen(device_id)
     _publish(f"{PREFIX}/{device_id}/availability", "online", retain=True)
     if weight_g is not None:
         _publish(f"{PREFIX}/{device_id}/weight", f"{weight_g:.2f}", retain=True)
@@ -216,6 +285,7 @@ def on_device_seen(device_id: str) -> None:
     import datetime as _dt
 
     _announce_device(device_id)
+    _bump_last_seen(device_id)
     _publish(f"{PREFIX}/{device_id}/availability", "online", retain=True)
     now_iso = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     _publish(f"{PREFIX}/{device_id}/last_seen", now_iso, retain=True)
