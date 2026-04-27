@@ -144,23 +144,22 @@ def _publish(topic: str, payload: str, retain: bool = False, qos: int = 0) -> bo
     return getattr(info, "rc", 0) == 0
 
 
-def _publish_reliable(topic: str, payload: str, retain: bool = True, timeout: float = 2.0) -> bool:
-    """Publish with QoS 1 + wait for broker ack. Used for HA discovery configs.
+def _publish_reliable(topic: str, payload: str, retain: bool = True) -> bool:
+    """Publish QoS 1 retained — used for HA discovery configs.
 
-    Returns True only if broker confirmed receipt within `timeout` seconds.
+    Checks paho's queue-accept rc. Does NOT block waiting for broker ack:
+    blocking made on_device_seen pile up at ~10s/call when the broker had
+    transient slowness, which in turn delayed last_seen state publishes.
+    QoS 1 + retain means paho's own resend logic handles delivery.
     """
     if not _client:
         return False
     try:
         info = _client.publish(topic, payload, qos=1, retain=retain)
-        if getattr(info, "rc", 0) != 0:
-            return False
-        # paho's wait_for_publish blocks until ack (or until disconnect).
-        info.wait_for_publish(timeout=timeout)
-        return info.is_published()
     except Exception:
         LOG.exception("MQTT reliable publish failed topic=%s", topic)
         return False
+    return getattr(info, "rc", 0) == 0
 
 
 def _announce_device(device_id: str) -> None:
