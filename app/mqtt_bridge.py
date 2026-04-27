@@ -29,7 +29,10 @@ HOST = os.getenv("MQTT_HOST", "")
 PORT = int(os.getenv("MQTT_PORT", "1883"))
 USER = os.getenv("MQTT_USER") or None
 PASS = os.getenv("MQTT_PASS") or None
-CLIENT_ID = os.getenv("MQTT_CLIENT_ID", "smartmat-bridge")
+# Default client_id includes hostname so two SmartMat containers (or a stale
+# crashed instance) don't fight over the same id and force broker disconnects.
+import socket as _socket
+CLIENT_ID = os.getenv("MQTT_CLIENT_ID", f"smartmat-bridge-{_socket.gethostname()}")
 PREFIX = os.getenv("MQTT_TOPIC_PREFIX", "smartmat").rstrip("/")
 DISCOVERY = os.getenv("MQTT_DISCOVERY", "1") not in ("0", "false", "")
 DISCOVERY_PREFIX = os.getenv("MQTT_DISCOVERY_PREFIX", "homeassistant").rstrip("/")
