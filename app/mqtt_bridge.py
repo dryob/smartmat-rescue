@@ -206,8 +206,16 @@ def on_measurement(
 
 
 def on_device_seen(device_id: str) -> None:
-    """Call on /s or /i (any device check-in) so HA sees device as online."""
+    """Call on /s or /i (any device check-in) so HA sees device as online + bumps last_seen.
+
+    last_seen is server time of this checkin (device RTC is unreliable, can
+    revert to 2018 after power loss).
+    """
     if not _client:
         return
+    import datetime as _dt
+
     _announce_device(device_id)
     _publish(f"{PREFIX}/{device_id}/availability", "online", retain=True)
+    now_iso = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    _publish(f"{PREFIX}/{device_id}/last_seen", now_iso, retain=True)

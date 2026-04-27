@@ -237,6 +237,8 @@ class Handler(BaseHTTPRequestHandler):
         device_id = data.get("id")
         if device_id:
             upsert_device(device_id, None, None)
+            # 即使沒有 weight (空 md array 或 weight=None) 也要更新 MQTT last_seen
+            mqtt_bridge.on_device_seen(device_id)
 
         received = now_utc_str()
         battery = _to_float(data.get("b"))
