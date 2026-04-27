@@ -55,14 +55,18 @@ class MatInventorySensor(SensorEntity):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self._hass = hass
         self._sid = entry.data[CONF_SHORT_ID]
+        # Companion entities (tare/full/product) are auto-named by HA from the
+        # device's display name "SmartMat <last-4>" → entity_id slug uses last-4.
+        # unique_id uses full sid (collision-safe), entity_id uses short.
+        short = self._sid[-4:]
         self._weight_eid = entry.data[CONF_WEIGHT_ENTITY]
         self._last_seen_eid = entry.data.get(
             CONF_LAST_SEEN_ENTITY,
             self._weight_eid.replace("_weight", "_last_seen"),
         )
-        self._tare_eid = f"number.smartmat_{self._sid}_tare"
-        self._full_eid = f"number.smartmat_{self._sid}_full"
-        self._product_eid = f"text.smartmat_{self._sid}_product"
+        self._tare_eid = f"number.smartmat_{short}_tare"
+        self._full_eid = f"number.smartmat_{short}_full"
+        self._product_eid = f"text.smartmat_{short}_product"
         self._attr_unique_id = f"{DOMAIN}_{self._sid}_{UID_INVENTORY}"
         self._attr_device_info = DeviceInfo(identifiers={(DOMAIN, self._sid)})
         self._attr_native_value = None
