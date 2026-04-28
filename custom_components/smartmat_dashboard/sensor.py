@@ -107,4 +107,6 @@ class MatInventorySensor(SensorEntity):
             self._attr_native_value = None
             return
         pct = (w - tare) / (full - tare) * 100.0
-        self._attr_native_value = max(0.0, min(100.0, round(pct, 0)))
+        # 不再封頂 100% — 比設定的 full 多裝就如實顯示 (e.g. 120%).
+        # 只擋負值 (秤面比 tare 還輕通常是裝置誤差).
+        self._attr_native_value = max(0.0, round(pct, 0))

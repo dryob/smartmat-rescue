@@ -822,8 +822,11 @@ class SmartMatCard extends HTMLElement {
 
     const pctRaw = parseFloat(inv.state);
     const hasPct = !Number.isNaN(pctRaw);
-    const pct = hasPct ? Math.max(0, Math.min(100, pctRaw)) : 0;
-    const pctRound = Math.round(pct);
+    // pctVisual capped at 100 — used for bar/ring/liquid fill so they don't overflow.
+    // pctRound is the displayed number, NOT capped — overfilled mats show 120% etc.
+    const pctVisual = hasPct ? Math.max(0, Math.min(100, pctRaw)) : 0;
+    const pct = hasPct ? Math.max(0, pctRaw) : 0;     // alias for level/colour calc
+    const pctRound = hasPct ? Math.round(pct) : 0;
 
     const critical = getStateNum(this._hass, "input_number.smartmat_threshold_critical", 10);
     const low = getStateNum(this._hass, "input_number.smartmat_threshold_low", 33);
@@ -878,23 +881,23 @@ class SmartMatCard extends HTMLElement {
       case "tile":
         if (this._el.pctInline) this._el.pctInline.textContent = hasPct ? `${pctRound}%` : "—";
         if (this._el.tileEmoji) this._el.tileEmoji.textContent = lv.emoji;
-        if (this._el.barFill) this._el.barFill.style.width = hasPct ? `${pct}%` : "0%";
+        if (this._el.barFill) this._el.barFill.style.width = hasPct ? `${pctVisual}%` : "0%";
         break;
 
       case "liquid":
-        if (this._el.liquidFill) this._el.liquidFill.style.height = hasPct ? `${pct}%` : "0%";
+        if (this._el.liquidFill) this._el.liquidFill.style.height = hasPct ? `${pctVisual}%` : "0%";
         if (this._el.liquidPct) this._el.liquidPct.textContent = hasPct ? String(pctRound) : "—";
         break;
 
       case "minimal":
         if (this._el.minimalPct) this._el.minimalPct.textContent = hasPct ? String(pctRound) : "—";
-        if (this._el.barFill) this._el.barFill.style.width = hasPct ? `${pct}%` : "0%";
+        if (this._el.barFill) this._el.barFill.style.width = hasPct ? `${pctVisual}%` : "0%";
         break;
 
       default: // ring
         if (this._el.ringPct) this._el.ringPct.textContent = hasPct ? String(pctRound) : "—";
         if (this._el.ringFill) {
-          const offset = RING_C * (1 - pct / 100);
+          const offset = RING_C * (1 - pctVisual / 100);
           this._el.ringFill.style.strokeDashoffset = String(offset);
         }
         if (this._el.foot) this._el.foot.textContent = `上報 ${lastSeenStr}`;
