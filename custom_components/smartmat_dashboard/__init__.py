@@ -8,14 +8,16 @@ import shutil
 from pathlib import Path
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers.event import async_track_state_change_event
 
 from .const import (
     CARD_URL,
     CONF_SHORT_ID,
     CONF_WEIGHT_ENTITY,
+    DEFAULT_PRODUCT_NAME,
     DOMAIN,
     PLATFORMS,
     VERSION,
@@ -174,6 +176,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # in the human-readable device name to keep titles tidy.
     sid = entry.data[CONF_SHORT_ID]
     short = sid[-4:]
+    weight_eid = entry.data[CONF_WEIGHT_ENTITY]
     dev_reg = dr.async_get(hass)
     dev_reg.async_get_or_create(
         config_entry_id=entry.entry_id,
@@ -186,7 +189,61 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
 
+    # Sync device names (this integration's device + the MQTT device) to the
+    # product entity's value, and keep them in sync as the user edits product.
+    product_eid = f"text.smartmat_{short}_product"
+
+    @callback
+    def _on_product_change(_event) -> None:
+        st = hass.states.get(product_eid)
+        _sync_device_names(hass, sid, weight_eid, st.state if st else None)
+
+    # Initial pass — runs after platforms are set up so text entity exists.
+    initial = hass.states.get(product_eid)
+    _sync_device_names(hass, sid, weight_eid, initial.state if initial else None)
+
+    unsub = async_track_state_change_event(hass, [product_eid], _on_product_change)
+    entry.async_on_unload(unsub)
+
     return True
+
+
+def _sync_device_names(
+    hass: HomeAssistant,
+    sid: str,
+    weight_eid: str,
+    product: str | None,
+) -> None:
+    """Push the product string to both the integration device and the MQTT device.
+
+    The integration's device is identified by (DOMAIN, sid). The MQTT
+    rescue-server device is found via the weight entity's device_id (most
+    reliable — avoids guessing the MQTT identifier domain or capitalisation).
+
+    name_by_user is HA's user-override field; setting it does NOT touch the
+    underlying `name` field, so MQTT discovery republishes don't fight us.
+    Falsy/placeholder products clear the override.
+    """
+    cleaned = (product or "").strip()
+    if not cleaned or cleaned in (DEFAULT_PRODUCT_NAME, sid, sid[-4:]):
+        cleaned = None  # treat empty / default placeholders as "no override"
+
+    dev_reg = dr.async_get(hass)
+    ent_reg = er.async_get(hass)
+
+    # 1) integration device
+    own = dev_reg.async_get_device(identifiers={(DOMAIN, sid)})
+    if own is not None and own.name_by_user != cleaned:
+        dev_reg.async_update_device(own.id, name_by_user=cleaned)
+
+    # 2) MQTT device — look it up via the weight entity (the entity registry
+    #    knows which device that sensor belongs to, regardless of identifier
+    #    namespacing).
+    weight_entry = ent_reg.async_get(weight_eid)
+    if weight_entry and weight_entry.device_id:
+        mqtt_dev = dev_reg.async_get(weight_entry.device_id)
+        if mqtt_dev is not None and mqtt_dev.name_by_user != cleaned:
+            dev_reg.async_update_device(mqtt_dev.id, name_by_user=cleaned)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
